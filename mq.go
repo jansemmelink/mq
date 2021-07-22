@@ -2,13 +2,15 @@ package mq
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
-	"conor.co.za/vservices/golib/logger"
+	"github.com/stewelarend/logger"
 )
 
-var log = logger.New("mq")
+var log = logger.New()
 
 //IBroker is a message broker to publish/subscribe
 // to messages in the selected message queuing implementation
@@ -17,7 +19,7 @@ type IBroker interface {
 
 	//Subscribe is a blocking call that returns when
 	// the connection break or the limit is reached etc...
-	Subscribe(topic string, processor IProcessor) error
+	Subscribe(topics []string, nrWorkerThreads int, processor IProcessor) error
 
 	//close prevents further publishing and continue running
 	//subscriptions until they terminate when no more messages,
@@ -72,18 +74,18 @@ func (c *context) StartTime() time.Time {
 }
 
 func (c *context) Process(msg IMessage) {
-	log.Debug.Printf("Context[%s] %s: Processing", c.id, c.startTime.Format("2006-01-02 15:04:05"))
+	log.Debugf("Context[%s] %s: Processing", c.id, c.startTime.Format("2006-01-02 15:04:05"))
 	time.Sleep(time.Second * 2)
 }
 
 func (c *context) Close(err error) {
 	if c.doneChan == nil {
-		log.Error.Printf("Context[%s] already closed before err=%v", c.id, err)
+		log.Errorf("Context[%s] already closed before err=%v", c.id, err)
 	}
 	if err == nil {
-		log.Debug.Printf("Context[%s]: End with success", c.id)
+		log.Debugf("Context[%s]: End with success", c.id)
 	} else {
-		log.Debug.Printf("Context[%s]: End with error: %c", c.id, err)
+		log.Debugf("Context[%s]: End with error: %c", c.id, err)
 	}
 
 	//write into done chan
@@ -102,7 +104,7 @@ func NewContextManager(max int) IContextManager {
 		for {
 			<-cm.contextDoneChan
 			cm.contextWaitGroup.Done()
-			log.Debug.Printf("A context terminated...")
+			log.Debugf("A context terminated...")
 		}
 	}()
 
@@ -136,12 +138,28 @@ func (cm *ctxMgr) New() IContext {
 	//IContext.Close() must call wg.Done() to undo this
 	cm.contextWaitGroup.Add(1)
 
-	log.Debug.Printf("Context[%s] CREATED", ctx.ID())
+	log.Debugf("Context[%s] CREATED", ctx.ID())
 	return ctx
 }
 
 func (cm *ctxMgr) Wait() {
-	log.Debug.Printf("Waiting for contexts to terminate...")
+	log.Debugf("Waiting for contexts to terminate...")
 	cm.contextWaitGroup.Wait()
 	return
+}
+
+const topicPattern = `[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])*`
+
+var topicRegex = regexp.MustCompile("^" + topicPattern + "$")
+
+func Topics(csv string) ([]string, error) {
+	topics := strings.Split(csv, ",")
+	for i, topic := range topics {
+		topic := strings.TrimSpace(topic)
+		if !topicRegex.MatchString(topic) {
+			return topics, logger.Wrapf(nil, "invalid topic=\"%s\"", topic)
+		}
+		topics[i] = topic
+	}
+	return topics, nil
 }

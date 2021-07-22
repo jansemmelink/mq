@@ -1,7 +1,10 @@
 package memmq
 
 import (
+	"fmt"
+
 	"github.com/jansemmelink/mq"
+	"github.com/stewelarend/logger"
 )
 
 //broker implements mq.IBroker
@@ -27,26 +30,33 @@ func (b *broker) Publish(topic string, msg mq.IMessage) error {
 	return nil
 }
 
-func (b *broker) Subscribe(topic string, processor mq.IProcessor) error {
+func (b *broker) Subscribe(topics []string, nrWorkerThreads int, processor mq.IProcessor) error {
+	if len(topics) != 1 {
+		return logger.Wrapf(nil, "NYI len(topics=%v)=%d != 1", topics, len(topics))
+	}
+	//topic := topics[0]
+	if nrWorkerThreads != 1 {
+		return fmt.Errorf("NYI nrWorkerThreads!=1")
+	}
 	//run for ever to process messages
 	for {
-		log.Debug.Printf("Waiting for message...")
+		log.Debugf("Waiting for message...")
 		msg, ok := <-b.messageChannel
 		if !ok {
-			log.Debug.Printf("Broker closed. Subscription stopped.")
+			log.Debugf("Broker closed. Subscription stopped.")
 			return nil
 		}
-		log.Debug.Printf("Processing message...")
+		log.Debugf("Processing message...")
 		err := processor.Process(
 			b.ctxMgr.New(),
 			msg) //todo - will crash with nil context, but not yet doing concurrent processing
 		if err != nil {
-			log.Error.Printf("Failed to process message: %v", err)
+			log.Errorf("Failed to process message: %v", err)
 		} else {
-			log.Debug.Printf("Processed successfully.")
+			log.Debugf("Processed successfully.")
 		}
 	}
-	//return log.Errorf(nil, "Should not get here yet... should be running forever???")
+	//return logger.Wrapf(nil, "Should not get here yet... should be running forever???")
 }
 
 func (b *broker) Close() {

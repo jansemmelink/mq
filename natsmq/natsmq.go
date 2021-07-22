@@ -2,10 +2,12 @@ package natsmq
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/jansemmelink/mq"
-	stan "github.com/nats-io/go-nats-streaming"
+	stan "github.com/nats-io/stan.go"
+	"github.com/stewelarend/logger"
 )
 
 //broker implements mq.IBroker
@@ -35,17 +37,17 @@ func New(c Config) mq.IBroker {
 
 func (b *broker) Publish(topic string, msg mq.IMessage) error {
 	if b == nil {
-		return log.Errorf(nil, "Called <nil>.Publish(%s)", topic)
+		return logger.Wrapf(nil, "Called <nil>.Publish(%s)", topic)
 	}
 	if err := b.connect(); err != nil {
-		return log.Errorf(err, "Cannot publish without connection")
+		return logger.Wrapf(err, "Cannot publish without connection")
 	}
 	jsonMessage, err := json.Marshal(msg)
 	if err != nil {
-		return log.Errorf(err, "Publish(%s): Failed to encode", topic)
+		return logger.Wrapf(err, "Publish(%s): Failed to encode", topic)
 	}
 	if err := b.stanConn.Publish(topic, jsonMessage); err != nil {
-		return log.Errorf(err, "Failed to Publish(%s)", topic)
+		return logger.Wrapf(err, "Failed to Publish(%s)", topic)
 	}
 	return nil
 }
@@ -53,12 +55,19 @@ func (b *broker) Publish(topic string, msg mq.IMessage) error {
 //Subscribe implements IBroker.Subscribe()
 //when the broker is closed, the subscription stops taking new messages and terminate
 //   after processing the last messages it already took
-func (b *broker) Subscribe(topic string, processor mq.IProcessor) error {
+func (b *broker) Subscribe(topics []string, nrWorkerThreads int, processor mq.IProcessor) error {
+	if len(topics) != 1 {
+		return logger.Wrapf(nil, "NYI len(topics=%v)=%d != 1", topics, len(topics))
+	}
+	topic := topics[0]
 	if b == nil {
-		return log.Errorf(nil, "Called <nil>.Subscribe(%s)", topic)
+		return logger.Wrapf(nil, "Called <nil>.Subscribe(%s)", topic)
+	}
+	if nrWorkerThreads != 1 {
+		return fmt.Errorf("NYI nrWorkerThreads!=1")
 	}
 	if err := b.connect(); err != nil {
-		return log.Errorf(err, "Cannot subscribe without connection")
+		return logger.Wrapf(err, "Cannot subscribe without connection")
 	}
 
 	//create a new subscription
@@ -75,10 +84,10 @@ func (b *broker) Subscribe(topic string, processor mq.IProcessor) error {
 	subscriptionOptions = append(subscriptionOptions, stan.DurableName(topic))
 
 	/*if all {
-		log.Debug.Printf("Subscribing to start from 0...")
+		log.Debugf("Subscribing to start from 0...")
 		subscriptionOptions = append(subscriptionOptions, stan.StartAtSequence(0))
 	} else {
-		log.Debug.Printf("NOT start from 0...")
+		log.Debugf("NOT start from 0...")
 	}*/
 
 	//set ack timeout on this subscription
@@ -104,10 +113,10 @@ func (b *broker) Subscribe(topic string, processor mq.IProcessor) error {
 		s.natsHandlerFunc(processor), //called for each message
 		subscriptionOptions...)
 	if err != nil {
-		return log.Errorf(err, "Failed to subscribe to NATS subject=\"%s\"", topic)
+		return logger.Wrapf(err, "Failed to subscribe to NATS subject=\"%s\"", topic)
 	}
 
-	log.Info.Printf("Subscribed to NATS subject=%s, group=%s(=subject)", topic, topic)
+	log.Infof("Subscribed to NATS subject=%s, group=%s(=subject)", topic, topic)
 
 	b.mutex.Lock()
 	b.subscriptionWaitGroup.Add(1)
@@ -119,7 +128,7 @@ func (b *broker) Subscribe(topic string, processor mq.IProcessor) error {
 
 	//terminated: tell b not to wait for this subscription
 	//note: do not grab mutex here - broker.Close() may be holding it...
-	log.Debug.Printf("Subscription(%s) terminated.", topic)
+	log.Debugf("Subscription(%s) terminated.", topic)
 	b.subscriptionWaitGroup.Done()
 	//todo: delete from array... ? not sure if good idea yet... delete(b.subscriptions, s)
 	return nil
@@ -152,11 +161,11 @@ func (b *broker) connect() error {
 		var err error
 		b.stanConn, err = stan.Connect(b.config.ClusterID, b.config.ClientID, b.stanOptions...)
 		if err != nil {
-			return log.Errorf(err,
+			return logger.Wrapf(err,
 				"Failed to connect to NATS server=\"%s\", cluster=\"%s\" as client=\"%s\"",
 				b.config.URL, b.config.ClusterID, b.config.ClientID)
 		}
-		log.Info.Printf("Connected to NATS server \"%s\" cluster \"%s\" as client \"%s\"",
+		log.Infof("Connected to NATS server \"%s\" cluster \"%s\" as client \"%s\"",
 			b.config.URL, b.config.ClusterID, b.config.ClientID)
 	}
 	return nil
@@ -186,16 +195,16 @@ func (s *subscription) natsHandler(natsMsg *stan.Msg, processor mq.IProcessor) {
 	//decode the serialized message into an IMessage
 	msg, err := mq.DecodeMessage(natsMsg.Data)
 	if err != nil {
-		log.Error.Printf("Decoding failed: %v", err)
+		log.Errorf("Decoding failed: %v", err)
 		s.stanConn.Publish("deadletter."+s.topic, natsMsg.Data)
 		s.deadCount++
-		log.Error.Printf("Pushed deadletter[%d]: %v", s.deadCount, err)
+		log.Errorf("Pushed deadletter[%d]: %v", s.deadCount, err)
 		return
 	}
 
 	//create a context - throttling happens in NATS streaming subscription, not here,
 	//so here we create as many context as necessary
-	//log.Debug.Printf("Decoded message[%d]: %+v", s.msgCount, decodedMessage)
+	//log.Debugf("Decoded message[%d]: %+v", s.msgCount, decodedMessage)
 	go func() {
 		var err error
 		ctx := s.ctxMgr.New()
@@ -211,11 +220,11 @@ func (s *subscription) Close() {
 	if !s.closed {
 		s.stanSubscription.Close()
 		s.closed = true
-		log.Debug.Printf("Subscription(%s): CLOSED", s.topic)
+		log.Debugf("Subscription(%s): CLOSED", s.topic)
 
 		//wait for all concurrent processes to stop, currently only one
 		s.ctxMgr.Wait()
-		log.Debug.Printf("Subscription(%s): ALL Contexts terminated", s.topic)
+		log.Debugf("Subscription(%s): ALL Contexts terminated", s.topic)
 
 		//tell subscription main to terminate
 		s.done <- true

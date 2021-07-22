@@ -3,6 +3,8 @@ package mq
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/stewelarend/logger"
 )
 
 //IMessage is sent through mq system and is immutable, hence the GetXxx method names
@@ -31,7 +33,7 @@ func DecodeMessage(serializedData []byte) (IMessage, error) {
 	var msg message
 	err := json.Unmarshal(serializedData, &msg)
 	if err != nil {
-		return message{}, log.Errorf(err, "Failed to decode IMessage")
+		return message{}, logger.Wrapf(err, "Failed to decode IMessage")
 	}
 	return msg, nil
 }

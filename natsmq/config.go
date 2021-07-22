@@ -1,8 +1,8 @@
 package natsmq
 
-import "conor.co.za/vservices/golib/logger"
+import "github.com/stewelarend/logger"
 
-var log = logger.New("nats-mq")
+var log = logger.New()
 
 //Config to start a NATS Streaming message queue
 type Config struct {
